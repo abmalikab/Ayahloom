@@ -331,15 +331,17 @@ footer.about p { max-width: 65ch; }
   }
   function probeOnline() {
     var t = new Audio(), settled = false;
+    // Only a definite refusal counts as blocked. Phones often will not load audio before a tap,
+    // so no answer leaves the reciters enabled.
     function finish(ok) {
       if (settled) return; settled = true; onlineOK = ok;
-      if (!ok && !isMine() && S.play === 'idle') { S.source = 'mine'; $('source').value = 'mine'; }
+      if (ok === false && !isMine() && S.play === 'idle') { S.source = 'mine'; $('source').value = 'mine'; }
       renderAll();
     }
     t.preload = 'metadata';
     t.addEventListener('loadedmetadata', function () { finish(true); });
     t.addEventListener('error', function () { finish(false); });
-    setTimeout(function () { finish(false); }, 8000);
+    setTimeout(function () { finish(null); }, 8000);
     t.src = 'https://cdn.islamic.network/quran/audio/128/ar.alafasy/1.mp3';
   }
 
@@ -575,7 +577,7 @@ footer.about p { max-width: 65ch; }
   audio.addEventListener('error', function () {
     if (S.play !== 'playing') return;
     if (isMine()) haltWith('The recording for ayah ' + queue[qi] + ' could not be played. Record it again.');
-    else { onlineOK = false; haltWith('The reciter audio could not be loaded. Check your connection, or switch to My recordings.'); }
+    else haltWith('The reciter audio could not be loaded. Check your connection and press Play again.');
   });
 
   function setMediaSession() {
