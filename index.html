@@ -48,11 +48,17 @@ button, select, input { font: inherit; color: inherit; }
 [hidden] { display: none !important; }
 .wrap { max-width: 680px; margin: 0 auto; padding: 0 20px; }
 
-.bar { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 22px 0 18px; }
+.bar { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 22px 0 14px; }
 .bar h1 { margin: 0; font-family: var(--font-display); font-weight: 400; font-size: 30px; letter-spacing: 0.01em; line-height: 1; }
 .bar h1 em { font-style: italic; color: var(--accent); }
 .bar .progress { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; text-align: right; }
 
+.modes { display: inline-flex; background: var(--line); border-radius: 999px; padding: 3px; margin-bottom: 14px; }
+.seg { border: 0; background: transparent; border-radius: 999px; padding: 7px 20px; font-weight: 600; font-size: 14px; color: var(--muted); cursor: pointer; }
+.seg[aria-pressed="true"] { background: var(--sheet); color: var(--ink); box-shadow: 0 1px 3px rgba(10, 30, 25, 0.12); }
+body.listen .ayah input[type="checkbox"], body.listen .mem-only { display: none; }
+body.listen .ayah label { cursor: pointer; }
+body.listen .ayah:hover { background: var(--accent-soft); }
 .pickers { display: grid; grid-template-columns: 1.4fr 1fr; gap: 10px; }
 @media (max-width: 480px) { .pickers { grid-template-columns: 1fr; } }
 select, input[type="number"] {
@@ -144,6 +150,10 @@ footer.about p { max-width: 65ch; }
       <h1>Ayah<em>Loom</em></h1>
       <span class="progress" id="progress"></span>
     </div>
+    <div class="modes" role="group" aria-label="Mode">
+      <button class="seg" id="modeListen" type="button" aria-pressed="false">Listen</button>
+      <button class="seg" id="modeMem" type="button" aria-pressed="true">Memorize</button>
+    </div>
     <div class="pickers">
       <select id="surah" aria-label="Surah"></select>
       <select id="source" aria-label="Audio">
@@ -204,20 +214,19 @@ footer.about p { max-width: 65ch; }
       <button class="btn" id="again" type="button">Play again</button>
     </div>
     <div class="controls">
-      <button class="btn primary" id="lock" type="button"></button>
-      <button class="btn round" id="play" type="button"></button>
+      <button class="btn primary round" id="play" type="button"></button>
       <button class="btn round" id="stop" type="button" aria-label="Stop"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="3.5" width="9" height="9" rx="1.5" fill="currentColor"/></svg></button>
       <span class="spacer"></span>
       <button class="btn plain" id="optBtn" type="button" aria-expanded="false" aria-controls="settings">Options</button>
       <button class="btn plain" id="clear" type="button">Clear</button>
     </div>
     <div class="settings" id="settings" hidden>
-      <label>Repeat each ayah
+      <label class="mem-only">Repeat each ayah
         <select id="setRepeat"><option value="1">1 time</option><option value="2">2 times</option><option value="3">3 times</option><option value="5">5 times</option><option value="10">10 times</option></select></label>
-      <label>Loop the selection
+      <label class="mem-only">Loop the selection
         <select id="setLoops"><option value="0">Until I stop</option><option value="1">1 time</option><option value="3">3 times</option><option value="5">5 times</option><option value="10">10 times</option><option value="20">20 times</option></select></label>
-      <label>Pause between ayahs
-        <select id="setGap"><option value="0">None</option><option value="1">1 second</option><option value="3">3 seconds</option><option value="5">5 seconds</option><option value="10">10 seconds</option></select></label>
+      <label class="mem-only">Pause after each ayah
+        <select id="setGap"><option value="0">None</option><option value="1">1 second</option><option value="3">3 seconds</option><option value="5">5 seconds</option><option value="10">10 seconds</option><option value="-1">As long as the ayah</option><option value="-1.5">1.5 times the ayah</option><option value="-2">Twice the ayah</option></select></label>
       <label>Speed
         <select id="setSpeed"><option value="0.75">0.75×</option><option value="1">1×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option></select></label>
     </div>
@@ -246,13 +255,13 @@ footer.about p { max-width: 65ch; }
   var S = {
     surah: 1,
     selected: {},        // ayah number -> true, for the current surah
-    locked: false,
+    mode: 'memorize',    // listen | memorize
     play: 'idle',        // idle | playing | paused | done
     source: 'ar.alafasy|128',
     repeat: 1, loops: 0, gap: 0, speed: 1,
     memorized: {}        // "surah" -> { ayah: true }
   };
-  var queue = [], qi = 0, rep = 0, loop = 0, timer = null, waiting = false;
+  var queue = [], qi = 0, rep = 0, loop = 0, timer = null, waiting = false, inGap = false, gapAyah = null;
   var onlineOK = null;   // null = unknown, true/false after the probe
   var recURL = {};       // "s:a" -> object URL of the viewer's recording
   var attachFor = null;
@@ -266,7 +275,7 @@ footer.about p { max-width: 65ch; }
   function save() {
     try {
       localStorage.setItem(KEY, JSON.stringify({
-        surah: S.surah, selected: Object.keys(S.selected).map(Number), locked: S.locked,
+        surah: S.surah, selected: Object.keys(S.selected).map(Number), mode: S.mode,
         source: S.source, repeat: S.repeat, loops: S.loops, gap: S.gap, speed: S.speed, memorized: S.memorized
       }));
     } catch (e) {}
@@ -279,7 +288,7 @@ footer.about p { max-width: 65ch; }
       (d.selected || []).forEach(function (a) { if (a >= 1 && a <= TX[S.surah - 1].length) S.selected[a] = true; });
       ['source', 'repeat', 'loops', 'gap', 'speed'].forEach(function (k) { if (d[k] !== undefined) S[k] = d[k]; });
       if (d.memorized && typeof d.memorized === 'object') S.memorized = d.memorized;
-      S.locked = !!d.locked && Object.keys(S.selected).length > 0;
+      if (d.mode === 'listen' || d.mode === 'memorize') S.mode = d.mode;
     } catch (e) {}
   }
 
@@ -379,7 +388,7 @@ footer.about p { max-width: 65ch; }
       rec.start();
       renderAll();
     }).catch(function () {
-      micProblem('The microphone could not be used. The hosted page blocks it, so open the downloaded copy of AyahLoom and allow microphone access when your browser asks.');
+      micProblem('This page could not use the microphone. Open AyahLoom from its own web address and allow microphone access when your browser asks.');
     });
   }
   function stopRecording() { if (mic && mic.rec.state !== 'inactive') mic.rec.stop(); }
@@ -419,15 +428,16 @@ footer.about p { max-width: 65ch; }
   }
 
   function renderRows() {
-    var s = S.surah, mem = memOf(s), cur = (S.play === 'playing' || S.play === 'paused') ? queue[qi] : null;
+    var s = S.surah, mem = memOf(s), cur = (S.play === 'playing' || S.play === 'paused') ? (inGap ? gapAyah : queue[qi]) : null;
     var rows = $('ayahs').children;
     for (var i = 0; i < rows.length; i++) {
       var li = rows[i], a = i + 1, key = s + ':' + a, cb = li.querySelector('input');
       cb.checked = !!S.selected[a];
-      cb.disabled = S.locked;
+      cb.disabled = focus() || S.mode === 'listen';
       li.classList.toggle('checked', !!S.selected[a]);
       li.classList.toggle('now', cur === a);
       var side = li.lastChild; side.innerHTML = '';
+      if (S.mode === 'listen') continue;
       if (mem[a]) side.append(chip('mem', '✓ Memorized', 'Remove the memorized mark from ayah ' + a, 'unmem'));
       if (mic && mic.key === key) {
         side.append(chip('live', 'Stop recording · ' + clock(Date.now() - mic.t0), 'Stop recording ayah ' + a, 'stoprec'));
@@ -453,44 +463,50 @@ footer.about p { max-width: 65ch; }
     return b;
   }
 
+  // In Memorize, playing is what freezes the selection and folds the other ayahs away.
+  function focus() { return S.mode === 'memorize' && S.play !== 'idle'; }
   function renderDock() {
-    var sel = selectedList(), n = sel.length, total = TX[S.surah - 1].length;
-    document.body.classList.toggle('locked', S.locked);
-    $('tools').hidden = S.locked;
-    $('surah').disabled = S.locked;
+    var sel = selectedList(), n = sel.length, total = TX[S.surah - 1].length, listen = S.mode === 'listen';
+    document.body.classList.toggle('locked', focus());
+    document.body.classList.toggle('listen', listen);
+    $('modeListen').setAttribute('aria-pressed', listen ? 'true' : 'false');
+    $('modeMem').setAttribute('aria-pressed', listen ? 'false' : 'true');
+    $('tools').hidden = listen || focus();
+    $('surah').disabled = focus();
     $('count').textContent = n + ' of ' + total + ' selected';
     $('selAll').disabled = n === total;
     $('unselAll').disabled = n === 0;
-    $('lock').innerHTML = (S.locked ? ICON.unlock + 'Unlock' : ICON.lock + 'Lock');
-    $('lock').disabled = !S.locked && n === 0;
     var playing = S.play === 'playing';
     $('play').innerHTML = playing ? ICON.pause : ICON.play;
     $('play').setAttribute('aria-label', playing ? 'Pause' : S.play === 'paused' ? 'Resume' : 'Play');
-    $('play').disabled = !S.locked;
-    $('stop').disabled = !S.locked || S.play === 'idle' || S.play === 'done';
+    $('play').disabled = !!mic || (!listen && n === 0);
+    $('stop').disabled = S.play === 'idle';
+    $('clear').hidden = listen;
     $('clear').disabled = n === 0;
     $('donebar').hidden = S.play !== 'done';
 
     var st = $('status'), head, tail = '';
     st.className = 'status' + (S.play === 'done' ? ' done' : '');
     if (S.play === 'done') { head = 'Recitation complete'; tail = describe(sel); }
-    else if (!S.locked) { head = n ? describe(sel) : 'Nothing selected'; tail = n ? 'Lock to play on a loop.' : 'Tick the ayahs you want to memorize.'; }
-    else if (S.play === 'idle') { head = 'Locked'; tail = describe(sel); }
+    else if (S.play === 'idle' && listen) { head = 'Listen'; tail = 'Tap an ayah to play from there.'; }
+    else if (S.play === 'idle') { head = n ? describe(sel) : 'Nothing selected'; tail = n ? 'Press Play to loop.' : 'Tick the ayahs you want to memorize.'; }
+    else if (listen) { head = (S.play === 'paused' ? 'Paused · ayah ' : 'Ayah ') + queue[qi]; tail = 'of ' + total; }
     else {
-      head = (S.play === 'paused' ? 'Paused · ayah ' : 'Ayah ') + queue[qi];
-      if (S.repeat > 1) tail += 'repeat ' + (rep + 1) + ' of ' + S.repeat + ' · ';
-      tail += 'loop ' + (loop + 1) + (S.loops ? ' of ' + S.loops : '');
+      var c = conf();
+      head = inGap ? 'Your turn · ayah ' + gapAyah : (S.play === 'paused' ? 'Paused · ayah ' : 'Ayah ') + queue[qi];
+      if (c.repeat > 1 && !inGap) tail += 'repeat ' + (rep + 1) + ' of ' + c.repeat + ' · ';
+      tail += 'loop ' + (loop + 1) + (c.loops ? ' of ' + c.loops : '');
     }
-    if (S.locked && isMine() && S.play !== 'playing') {
+    if (!listen && isMine() && S.play === 'idle' && n) {
       var missing = sel.filter(function (a) { return !recURL[S.surah + ':' + a]; }).length;
-      if (missing) tail += ' · ' + missing + ' of ' + n + ' not recorded yet';
+      if (missing) tail = missing + ' of ' + n + ' not recorded yet.';
     }
-    if (flash) { tail = flash; }
+    if (flash) tail = flash;
     st.innerHTML = '';
     var b = document.createElement('b'); b.textContent = head; st.append(b);
-    if (tail) st.append('  ' + tail.replace(/^ · /, ''));
+    if (tail) st.append('  ' + tail);
 
-    $('mineBox').hidden = !isMine();
+    $('mineBox').hidden = !isMine() || listen;
     $('onlineNote').hidden = !(onlineOK === false);
     var opts = $('source').options;
     for (var i = 0; i < opts.length; i++) if (opts[i].value !== 'mine') opts[i].disabled = onlineOK === false;
@@ -512,13 +528,18 @@ footer.about p { max-width: 65ch; }
   function renderAll() { renderRows(); renderDock(); }
 
   // ---------- player engine ----------
-  function clearTimer() { if (timer) { clearTimeout(timer); timer = null; } }
+  function clearTimer() { if (timer) { clearTimeout(timer); timer = null; } inGap = false; }
+  // Listen plays straight through once; Memorize uses the repeat settings.
+  function conf() {
+    return S.mode === 'listen' ? { repeat: 1, loops: 1, gap: 0 } : { repeat: S.repeat, loops: S.loops, gap: S.gap };
+  }
+  function range(from, to) { var r = []; for (var a = from; a <= to; a++) r.push(a); return r; }
 
   function startCurrent() {
     // find the next ayah in the queue that has audio, starting at qi
     var tries = 0;
-    while (tries < queue.length && !urlFor(S.surah, queue[qi])) { advanceIndex(); tries++; if (S.play === 'done') return; }
-    if (tries >= queue.length) { haltWith('None of the selected ayahs has a recording yet.'); return; }
+    while (tries < queue.length && !urlFor(S.surah, queue[qi])) { advanceIndex(); tries++; if (S.play !== 'playing') return; }
+    if (tries >= queue.length) { haltWith(S.mode === 'listen' ? 'This surah has no recordings yet. Choose a reciter to listen.' : 'None of the selected ayahs has a recording yet.'); return; }
     waiting = false;
     audio.src = urlFor(S.surah, queue[qi]);
     audio.defaultPlaybackRate = S.speed; audio.playbackRate = S.speed;
@@ -529,36 +550,47 @@ footer.about p { max-width: 65ch; }
     if (row && row.scrollIntoView) row.scrollIntoView({ block: 'center', behavior: 'smooth' });
     setMediaSession();
   }
-  // moves qi/rep/loop to the next item; sets play = done when finite loops run out
+  // moves qi/rep/loop to the next item; ends playback when finite loops run out
   function advanceIndex() {
+    var c = conf();
     rep = 0; qi++;
     if (qi >= queue.length) {
       qi = 0; loop++;
-      if (S.loops && loop >= S.loops) { loop = S.loops - 1; finish(); }
+      if (c.loops && loop >= c.loops) { loop = c.loops - 1; finish(); }
     }
   }
   function onEnded() {
     if (S.play !== 'playing') return;
+    var c = conf(), heard = audio.currentTime || 0, justPlayed = queue[qi];
     rep++;
-    if (rep >= S.repeat) advanceIndex();
+    if (rep >= c.repeat) advanceIndex();
     if (S.play !== 'playing') return;
     waiting = true;
-    if (S.gap > 0) { renderDock(); timer = setTimeout(function () { timer = null; startCurrent(); }, S.gap * 1000); }
-    else startCurrent();
+    // a negative setting means "as long as the ayah just heard", times that factor
+    var ms = c.gap > 0 ? c.gap * 1000 : c.gap < 0 ? Math.max(1000, heard * -c.gap * 1000) : 0;
+    if (ms) {
+      inGap = true; gapAyah = justPlayed; renderAll();
+      timer = setTimeout(function () { timer = null; inGap = false; startCurrent(); }, ms);
+    } else startCurrent();
+  }
+  function begin(list) {
+    clearTimer();
+    queue = list; qi = 0; rep = 0; loop = 0; flash = '';
+    if (!queue.length) return;
+    S.play = 'playing';
+    startCurrent();
   }
   function play() {
-    if (!S.locked || mic) return;
+    if (mic) return;
     flash = '';
     if (S.play === 'paused') {
       S.play = 'playing';
       if (waiting) startCurrent(); else { var p = audio.play(); if (p && p.catch) p.catch(function () {}); renderAll(); }
       return;
     }
-    queue = selectedList(); qi = 0; rep = 0; loop = 0;
-    if (!queue.length) return;
-    S.play = 'playing';
-    startCurrent();
+    begin(S.mode === 'listen' ? range(1, TX[S.surah - 1].length) : selectedList());
   }
+  function playFrom(a) { if (!mic) begin(range(a, TX[S.surah - 1].length)); }
   function pause() {
     if (S.play !== 'playing') return;
     S.play = 'paused';
@@ -573,6 +605,7 @@ footer.about p { max-width: 65ch; }
     renderAll();
   }
   function finish() {
+    if (S.mode === 'listen') { stop(); return; }
     clearTimer(); audio.pause(); waiting = false;
     S.play = 'done';
     renderAll();
@@ -597,22 +630,21 @@ footer.about p { max-width: 65ch; }
   }
 
   // ---------- actions ----------
-  function setLocked(on) {
-    if (on && !selectedList().length) return;
-    stop();
-    S.locked = on;
+  function setMode(m) {
+    if (S.mode === m) return;
+    stopRecording(); stop();
+    S.mode = m;
     save(); renderAll();
-    if (on) window.scrollTo(0, 0);
   }
   function setAll(on) {
-    if (S.locked) return;
+    if (focus() || S.mode !== 'memorize') return;
     S.selected = {};
     if (on) for (var a = 1; a <= TX[S.surah - 1].length; a++) S.selected[a] = true;
     save(); renderAll();
   }
   function clearSelection() {
     stop();
-    S.selected = {}; S.locked = false;
+    S.selected = {};
     save(); renderAll();
   }
   function markMemorizedAndClear() {
@@ -622,7 +654,7 @@ footer.about p { max-width: 65ch; }
   }
   function changeSurah(s) {
     stopRecording(); stop();
-    S.surah = s; S.selected = {}; S.locked = false;
+    S.surah = s; S.selected = {};
     save(); renderSurah(); renderDock(); window.scrollTo(0, 0);
   }
 
@@ -638,14 +670,17 @@ footer.about p { max-width: 65ch; }
 
   // ---------- events ----------
   $('ayahs').addEventListener('change', function (e) {
-    if (e.target.type !== 'checkbox' || S.locked) return;
+    if (e.target.type !== 'checkbox' || focus() || S.mode !== 'memorize') return;
     var a = +e.target.closest('.ayah').dataset.a;
     if (e.target.checked) S.selected[a] = true; else delete S.selected[a];
     save(); renderAll();
   });
   $('ayahs').addEventListener('click', function (e) {
+    var li = e.target.closest('.ayah'); if (!li) return;
+    var a = +li.dataset.a, key = S.surah + ':' + a;
+    if (S.mode === 'listen') { e.preventDefault(); playFrom(a); return; }
     var b = e.target.closest('button.chip'); if (!b) return;
-    var a = +b.closest('.ayah').dataset.a, key = S.surah + ':' + a, act = b.dataset.act;
+    var act = b.dataset.act;
     if (act === 'unmem') { delete memOf(S.surah)[a]; save(); renderAll(); }
     else if (act === 'rec') startRecording(key);
     else if (act === 'stoprec') stopRecording();
@@ -667,6 +702,8 @@ footer.about p { max-width: 65ch; }
       (bad ? '. ' + bad + (bad === 1 ? ' file name was' : ' file names were') + ' not recognised.' : '.');
     renderAll();
   });
+  $('modeListen').addEventListener('click', function () { setMode('listen'); });
+  $('modeMem').addEventListener('click', function () { setMode('memorize'); });
   $('selAll').addEventListener('click', function () { setAll(true); });
   $('unselAll').addEventListener('click', function () { setAll(false); });
   $('selRange').addEventListener('click', function () {
@@ -677,7 +714,6 @@ footer.about p { max-width: 65ch; }
   });
   $('surah').addEventListener('change', function () { changeSurah(+this.value); });
   $('source').addEventListener('change', function () { stopRecording(); stop(); S.source = this.value; save(); renderAll(); });
-  $('lock').addEventListener('click', function () { setLocked(!S.locked); });
   $('play').addEventListener('click', function () { if (S.play === 'playing') pause(); else play(); });
   $('stop').addEventListener('click', stop);
   $('clear').addEventListener('click', clearSelection);
