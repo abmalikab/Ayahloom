@@ -166,7 +166,6 @@ footer.about p { max-width: 65ch; }
         <option value="mine">My recordings</option>
       </select>
     </div>
-    <p class="note alert" id="onlineNote" hidden>Reciter audio cannot be reached from this page. Open the downloaded copy of AyahLoom to stream a reciter, or use your own recordings here.</p>
     <p class="note alert" id="micNote" hidden></p>
     <div id="mineBox" hidden>
       <p class="note">Press Record beside an ayah to recite it into your microphone, or <button class="link" id="importBtn" type="button">add audio files</button> named by surah and ayah, such as 002255.mp3. Recordings stay in this browser. <span id="importMsg"></span></p>
@@ -262,7 +261,6 @@ footer.about p { max-width: 65ch; }
     memorized: {}        // "surah" -> { ayah: true }
   };
   var queue = [], qi = 0, rep = 0, loop = 0, timer = null, waiting = false, inGap = false, gapAyah = null;
-  var onlineOK = null;   // null = unknown, true/false after the probe
   var recURL = {};       // "s:a" -> object URL of the viewer's recording
   var attachFor = null;
   var mic = null;        // { key, rec, stream, chunks, t0, tick } while recording
@@ -344,22 +342,6 @@ footer.about p { max-width: 65ch; }
     var p = S.source.split('|');
     return 'https://cdn.islamic.network/quran/audio/' + p[1] + '/' + p[0] + '/' + (OFFSET[s - 1] + a) + '.mp3';
   }
-  function probeOnline() {
-    var t = new Audio(), settled = false;
-    // Only a definite refusal counts as blocked. Phones often will not load audio before a tap,
-    // so no answer leaves the reciters enabled.
-    function finish(ok) {
-      if (settled) return; settled = true; onlineOK = ok;
-      if (ok === false && !isMine() && S.play === 'idle') { S.source = 'mine'; $('source').value = 'mine'; }
-      renderAll();
-    }
-    t.preload = 'metadata';
-    t.addEventListener('loadedmetadata', function () { finish(true); });
-    t.addEventListener('error', function () { finish(false); });
-    setTimeout(function () { finish(null); }, 8000);
-    t.src = 'https://cdn.islamic.network/quran/audio/128/ar.alafasy/1.mp3';
-  }
-
   // ---------- microphone ----------
   function clock(ms) { var s = Math.floor(ms / 1000); return Math.floor(s / 60) + ':' + ('0' + (s % 60)).slice(-2); }
   function micProblem(text) { $('micNote').textContent = text; $('micNote').hidden = false; }
@@ -507,9 +489,6 @@ footer.about p { max-width: 65ch; }
     if (tail) st.append('  ' + tail);
 
     $('mineBox').hidden = !isMine() || listen;
-    $('onlineNote').hidden = !(onlineOK === false);
-    var opts = $('source').options;
-    for (var i = 0; i < opts.length; i++) if (opts[i].value !== 'mine') opts[i].disabled = onlineOK === false;
 
     var mem = Object.keys(memOf(S.surah)).length;
     $('progress').textContent = mem + ' of ' + total + ' memorized';
@@ -616,7 +595,7 @@ footer.about p { max-width: 65ch; }
   audio.addEventListener('error', function () {
     if (S.play !== 'playing') return;
     if (isMine()) haltWith('The recording for ayah ' + queue[qi] + ' could not be played. Record it again.');
-    else haltWith('The reciter audio could not be loaded. Check your connection and press Play again.');
+    else haltWith('The reciter audio could not be loaded. Check your connection. Inside the Claude preview reciters are blocked, so open AyahLoom from its own web address.');
   });
 
   function setMediaSession() {
@@ -745,7 +724,6 @@ footer.about p { max-width: 65ch; }
   $('setRepeat').value = S.repeat; $('setLoops').value = S.loops; $('setGap').value = S.gap; $('setSpeed').value = S.speed;
   renderSurah(); renderDock();
   openDB(renderAll);
-  probeOnline();
 
   window.__ayahloom = { state: S, audio: audio };  // for testing
 })();
